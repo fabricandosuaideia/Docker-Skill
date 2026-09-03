@@ -36,46 +36,69 @@ aqui vale para qualquer linguagem ou stack.
 
 ## Instalação
 
-Clone e rode o instalador do seu sistema. Os dois suportam instalação global
-(vale pra toda sessão do Claude Code na máquina) ou por projeto (só este
-repositório), e recusam sobrescrever uma instalação existente a menos que
+Não precisa de `git clone` — o instalador baixa a skill direto do GitHub. Os
+dois scripts suportam instalação global (vale pra toda sessão do Claude Code
+na máquina, é o padrão) ou por projeto (só este repositório, `--project` /
+`-Project`), e recusam sobrescrever uma instalação existente a menos que
 você passe a flag de força.
 
 **macOS / Linux / WSL:**
 
 ```sh
-git clone https://github.com/fabricandosuaideia/Docker-Skill.git
-cd Docker-Skill
-./install.sh              # global:  ~/.claude/skills/docker-image-playbook
-# ./install.sh --project  # projeto: ./.claude/skills/docker-image-playbook
+curl -fsSL https://raw.githubusercontent.com/fabricandosuaideia/Docker-Skill/main/install.sh | bash
 ```
 
-**Windows (PowerShell):**
+Instala em `~/.claude/skills/docker-image-playbook`. Com flags — repare no
+`-s --`, obrigatório ao usar pipe pro bash:
+
+```sh
+curl -fsSL .../install.sh | bash -s -- --project   # ./.claude/skills/docker-image-playbook
+curl -fsSL .../install.sh | bash -s -- --force      # sobrescreve uma instalação existente
+curl -fsSL .../install.sh | bash -s -- --uninstall  # remove, sem precisar baixar nada
+```
+
+**Windows (PowerShell 5.1+, já vem no Windows 10 em diante):**
 
 ```powershell
-git clone https://github.com/fabricandosuaideia/Docker-Skill.git
-cd Docker-Skill
-./install.ps1              # global:  $HOME/.claude/skills/docker-image-playbook
-# ./install.ps1 -Project   # projeto: ./.claude/skills/docker-image-playbook
+irm https://raw.githubusercontent.com/fabricandosuaideia/Docker-Skill/main/install.ps1 | iex
 ```
 
-Rodar o script de novo recusa sobrescrever uma instalação existente — passe
-`--force` (`-Force` no Windows) para atualizar. Passe `--uninstall`
-(`-Uninstall`) para remover.
+A forma com pipe não aceita parâmetros. Para `-Project`, `-Force` ou
+`-Uninstall`, baixe o script primeiro:
+
+```powershell
+irm https://raw.githubusercontent.com/fabricandosuaideia/Docker-Skill/main/install.ps1 -OutFile install.ps1
+./install.ps1 -Project -Force
+```
+
+O `install.sh` também roda direto no Windows se você tiver Git Bash ou WSL,
+como alternativa ao `install.ps1`.
 
 Se já existir uma sessão do Claude Code aberta, ela pega uma instalação
 global sob `~/.claude/skills/` ao vivo, sem precisar reiniciar — desde que
 esse diretório já existisse quando a sessão começou. Um `.claude/skills/` de
 projeto totalmente novo precisa reiniciar a sessão para ser observado.
 
+**Trabalhando na skill em si:** rode qualquer um dos scripts de dentro de um
+clone deste repositório (`./install.sh`, sem pipe) e ele instala sua cópia
+local em vez de baixar — editar um arquivo e rodar `./install.sh --force`
+de novo pega a edição sem round-trip de rede. Essa detecção de cópia local só
+acontece quando o script é executado de um arquivo em disco; via pipe
+(`curl | bash` / `irm | iex`) não existe cópia local pra ler, então ele
+sempre baixa.
+
 **Cobertura de plataforma:** `install.sh` usa só construções compatíveis com
-POSIX/bash 3.2 (arrays, `${BASH_SOURCE[0]}`, `cp -R`, um `sed` sem sintaxe
-de intervalo exclusiva do GNU) de propósito, para rodar sem alteração no
-toolchain BSD padrão do macOS — mas só foi testado executando de verdade em
-Linux/WSL2 até agora. O `install.ps1` não teve nenhum runtime de PowerShell
-disponível para teste de execução, só revisão estrutural. Se rodar em uma
-plataforma ainda não verificada, abra uma issue de qualquer forma — sucesso
-ou falha, os dois ajudam.
+POSIX/bash 3.2 (arrays, `${BASH_SOURCE[0]}`, `cp -R`, um `usage()` sem
+`sed`, glob simples em vez de `find -quit`) de propósito, para rodar sem
+alteração no toolchain BSD padrão do macOS — todos os caminhos (instalação
+local, instalação via download, `--force`, `--project`, `--uninstall`, a
+proteção de sobrescrita não-interativa, um download que falha) foram
+testados executando de verdade, mas só em Linux/WSL2 até agora, não em
+macOS real. O `install.ps1` também foi testado executando de ponta a ponta,
+só que em PowerShell 7 (`pwsh`) rodando em Linux, não no Windows PowerShell
+5.1 num Windows real — os dois são parecidos mas não idênticos. Se rodar em
+uma plataforma ainda não verificada, abra uma issue de qualquer forma —
+sucesso ou falha, os dois ajudam.
 
 ## Como usar
 

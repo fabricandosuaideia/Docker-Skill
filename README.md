@@ -35,45 +35,67 @@ it applies to any language or stack.
 
 ## Install
 
-Clone and run the installer for your platform. Both support a global
-install (every Claude Code session on the machine) or a project install
-(this repo only), and refuse to overwrite an existing install unless you
-pass the force flag.
+No `git clone` needed — the installer downloads the skill straight from
+GitHub. Both scripts support a global install (every Claude Code session on
+the machine, the default) or a project install (this repo only, `--project`
+/ `-Project`), and refuse to overwrite an existing install unless you pass
+the force flag.
 
 **macOS / Linux / WSL:**
 
 ```sh
-git clone https://github.com/fabricandosuaideia/Docker-Skill.git
-cd Docker-Skill
-./install.sh              # global:  ~/.claude/skills/docker-image-playbook
-# ./install.sh --project  # project: ./.claude/skills/docker-image-playbook
+curl -fsSL https://raw.githubusercontent.com/fabricandosuaideia/Docker-Skill/main/install.sh | bash
 ```
 
-**Windows (PowerShell):**
+Installs to `~/.claude/skills/docker-image-playbook`. With flags — note the
+`-s --`, required when piping into bash:
+
+```sh
+curl -fsSL .../install.sh | bash -s -- --project   # ./.claude/skills/docker-image-playbook
+curl -fsSL .../install.sh | bash -s -- --force      # overwrite an existing install
+curl -fsSL .../install.sh | bash -s -- --uninstall  # remove it, no download needed
+```
+
+**Windows (PowerShell 5.1+, ships with Windows 10 and later):**
 
 ```powershell
-git clone https://github.com/fabricandosuaideia/Docker-Skill.git
-cd Docker-Skill
-./install.ps1              # global:  $HOME/.claude/skills/docker-image-playbook
-# ./install.ps1 -Project   # project: ./.claude/skills/docker-image-playbook
+irm https://raw.githubusercontent.com/fabricandosuaideia/Docker-Skill/main/install.ps1 | iex
 ```
 
-Re-running either script refuses to overwrite an existing install — pass
-`--force` (`-Force` on Windows) to update. Pass `--uninstall` (`-Uninstall`)
-to remove it.
+The piped form can't take parameters. For `-Project`, `-Force`, or
+`-Uninstall`, download it first:
+
+```powershell
+irm https://raw.githubusercontent.com/fabricandosuaideia/Docker-Skill/main/install.ps1 -OutFile install.ps1
+./install.ps1 -Project -Force
+```
+
+`install.sh` also runs fine on Windows if you have Git Bash or WSL instead
+of using `install.ps1`.
 
 If a Claude Code session is already running, it picks up a global install
 under `~/.claude/skills/` live, no restart needed, as long as that directory
 already existed when the session started. A brand-new project-level
 `.claude/skills/` needs a session restart to be watched.
 
+**Working on the skill itself:** run either script from inside a clone of
+this repo (`./install.sh`, not piped) and it installs your local working
+copy instead of downloading — so editing a file and re-running
+`./install.sh --force` picks up the edit with no network round-trip. That
+local-copy detection only fires for a script executed from disk; piped in
+via `curl | bash` / `irm | iex`, there is no local copy to read, so it
+always downloads.
+
 **Platform coverage:** `install.sh` uses only POSIX/bash-3.2-compatible
-constructs (arrays, `${BASH_SOURCE[0]}`, `cp -R`, a `sed` substitution
-without GNU-only interval syntax) specifically so it runs unmodified on
-macOS's stock BSD toolchain, not just Linux — but it's only been
-execute-tested on Linux/WSL2 so far. `install.ps1` has had no PowerShell
-runtime available to execute-test at all, only a structural review. If you
-run either on a platform it hasn't been verified on, please open an issue
+constructs (arrays, `${BASH_SOURCE[0]}`, `cp -R`, a `sed`-free `usage()`,
+plain globs instead of `find -quit`) specifically so it runs unmodified on
+macOS's stock BSD toolchain, not just Linux — every path (local install,
+download install, `--force`, `--project`, `--uninstall`, the non-interactive
+overwrite guard, a failed download) has been execute-tested, but so far only
+on Linux/WSL2, not on real macOS. `install.ps1` has been execute-tested end
+to end too, but under PowerShell 7 (`pwsh`) on Linux, not Windows PowerShell
+5.1 on actual Windows — the two are close but not identical. If you run
+either on a platform it hasn't been verified on yet, please open an issue
 either way — success or failure both help.
 
 ## Using it
