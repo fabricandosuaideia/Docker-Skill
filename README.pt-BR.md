@@ -24,7 +24,8 @@ veja a tabela "Explicitly unverified" em `SKILL.md` para o que ainda não está
 
 | Arquivo | Cobre |
 |---|---|
-| `SKILL.md` | Navegação, a lição mais importante (medir antes de otimizar), um checklist rápido e um exemplo real de aplicação. Carrega primeiro. |
+| `SKILL.md` | Navegação, como criar um ambiente Docker do zero (inferir do repositório, perguntar pouco, separar dev de produção, verificar em vez de perguntar), a lição mais importante para builds já existentes (medir antes de otimizar), um checklist rápido e um exemplo real de aplicação. Carrega primeiro. |
+| `scaffolding-from-zero.md` | Profundidade total por trás da fase de scaffolding: tabelas completas de sinais (todo gerenciador de pacotes, todo framework coberto), mecânica de merge/watch do Compose, detalhe de monorepo/CI, o algoritmo de reconciliação brownfield, floors de versão. |
 | `dev-speed.md` | Velocidade de build: ordem de camadas, cache mounts do BuildKit (e as duas formas de anulá-los sem perceber), higiene de `.dockerignore` além do óbvio, como pinar referências upstream corretamente, tamanho do GC, instalação de pacotes no tamanho certo, `ninja` para builds de extensão nativa/CUDA. |
 | `production-hardening.md` | Produção: usuário non-root (e as pegadinhas específicas de GPU sob ele), multi-stage builds, camadas de imagem CUDA, secrets (`--mount=type=secret`, nunca `ARG`/`ENV`), pin por digest, scanning de vulnerabilidade, SBOM/provenance, `HEALTHCHECK`, tamanho de imagem, exposição de GPU (CDI vs. runtime legado), filesystem read-only, lockfiles, builds multi-plataforma. |
 | `scripts/audit_dockerfile.py` | Uma auditoria mecânica, sem dependências, sobre um ou mais Dockerfiles — pega a fatia realmente grep-ável do checklist: flags de cache contraditórias, pins de clone raso frágeis, nomes de `ARG`/`ENV` com cara de secret, tags flutuantes/sem digest, `USER`/`HEALTHCHECK` ausentes. É consultivo, não substitui Trivy/Grype/Docker Scout. |

@@ -5,8 +5,9 @@
 
 .DESCRIPTION
   No git clone needed -- downloads SKILL.md + dev-speed.md +
-  production-hardening.md + scripts/ straight from GitHub and installs them
-  into $HOME\.claude\skills\docker-image-playbook\ (default), or
+  production-hardening.md + scaffolding-from-zero.md + scripts/ straight
+  from GitHub and installs them into
+  $HOME\.claude\skills\docker-image-playbook\ (default), or
   .\.claude\skills\docker-image-playbook\ with -Project.
 
   Run from inside a clone of this repo, it installs the local copy instead
@@ -53,7 +54,7 @@ $SkillName = "docker-image-playbook"
 
 # The skill is these files and nothing else. Used to validate a download (or
 # a local clone) before anything on disk is touched.
-$RequiredFiles = @("dev-speed.md", "production-hardening.md")
+$RequiredFiles = @("dev-speed.md", "production-hardening.md", "scaffolding-from-zero.md")
 $RequiredScripts = @("audit_dockerfile.py")
 
 function Write-Status  { param($m) Write-Host "-> $m" }
@@ -126,9 +127,10 @@ if (-not $ScriptPath -and $MyInvocation.MyCommand -and $MyInvocation.MyCommand.P
 if ($ScriptPath -and (Test-Path -LiteralPath $ScriptPath)) {
   $CandidateDir = Split-Path -Parent $ScriptPath
   $hasAll = (Test-Path (Join-Path $CandidateDir "SKILL.md")) `
-    -and (Test-Path (Join-Path $CandidateDir "dev-speed.md")) `
-    -and (Test-Path (Join-Path $CandidateDir "production-hardening.md")) `
     -and (Test-Path (Join-Path $CandidateDir "scripts\audit_dockerfile.py"))
+  foreach ($f in $RequiredFiles) {
+    $hasAll = $hasAll -and (Test-Path (Join-Path $CandidateDir $f))
+  }
   if ($hasAll) { $LocalDir = $CandidateDir }
 }
 

@@ -11,7 +11,8 @@
 #   curl -fsSL .../install.sh | bash -s -- --force
 #   curl -fsSL .../install.sh | bash -s -- --uninstall
 #
-# Installs SKILL.md + dev-speed.md + production-hardening.md + scripts/ into
+# Installs SKILL.md + dev-speed.md + production-hardening.md +
+# scaffolding-from-zero.md + scripts/ into
 # ~/.claude/skills/docker-image-playbook (default) or
 # ./.claude/skills/docker-image-playbook with --project.
 #
@@ -34,7 +35,7 @@ UNINSTALL=0
 
 # The skill is these files and nothing else. Used to validate a download (or
 # a local clone) before anything on disk is touched.
-REQUIRED_FILES=(dev-speed.md production-hardening.md)
+REQUIRED_FILES=(dev-speed.md production-hardening.md scaffolding-from-zero.md)
 REQUIRED_SCRIPTS=(audit_dockerfile.py)
 
 print_status()  { echo "-> $1"; }
@@ -143,9 +144,13 @@ skill_version() {
 LOCAL_DIR=""
 if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
   CANDIDATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  if [ -f "${CANDIDATE_DIR}/SKILL.md" ] && [ -f "${CANDIDATE_DIR}/dev-speed.md" ] \
-     && [ -f "${CANDIDATE_DIR}/production-hardening.md" ] \
-     && [ -f "${CANDIDATE_DIR}/scripts/audit_dockerfile.py" ]; then
+  CANDIDATE_OK=1
+  [ -f "${CANDIDATE_DIR}/SKILL.md" ] || CANDIDATE_OK=0
+  [ -f "${CANDIDATE_DIR}/scripts/audit_dockerfile.py" ] || CANDIDATE_OK=0
+  for f in "${REQUIRED_FILES[@]}"; do
+    [ -f "${CANDIDATE_DIR}/${f}" ] || CANDIDATE_OK=0
+  done
+  if [ "$CANDIDATE_OK" = "1" ]; then
     LOCAL_DIR="$CANDIDATE_DIR"
   fi
 fi

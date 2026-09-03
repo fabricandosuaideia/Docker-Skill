@@ -23,7 +23,8 @@ it was checked — see `SKILL.md`'s "Explicitly unverified" table for what
 
 | File | Covers |
 |---|---|
-| `SKILL.md` | Navigation, the one lesson that matters most (measure before you optimize), a fast checklist, and a worked example. Loads first. |
+| `SKILL.md` | Navigation, scaffolding a Docker setup from zero (infer from the repo, ask sparingly, dev/prod separation, verify instead of asking), the one lesson that matters most for existing builds (measure before you optimize), a fast checklist, and a worked example. Loads first. |
+| `scaffolding-from-zero.md` | Full depth behind the scaffolding phase: complete signal tables (every package manager, every framework covered), Compose merge/watch mechanics, monorepo/CI detail, the brownfield reconciliation algorithm, version floors. |
 | `dev-speed.md` | Build speed: layer ordering, BuildKit cache mounts (and the two ways to silently defeat them), `.dockerignore` hygiene beyond the obvious, pinning upstream refs correctly, GC sizing, right-sized package installs, `ninja` for native/CUDA extension builds. |
 | `production-hardening.md` | Shipping: non-root users (and the GPU-specific gotchas under them), multi-stage builds, CUDA base-image tiers, secrets (`--mount=type=secret`, never `ARG`/`ENV`), digest pinning, vulnerability scanning, SBOM/provenance, `HEALTHCHECK`, image size, GPU exposure (CDI vs. the legacy runtime), read-only rootfs, lockfiles, multi-platform builds. |
 | `scripts/audit_dockerfile.py` | A mechanical, dependency-free pass over one or more Dockerfiles for the checklist's grep-able subset: contradictory cache-mount flags, fragile shallow-clone pins, secret-shaped `ARG`/`ENV` names, floating/undigested tags, missing `USER`/`HEALTHCHECK`. Advisory, not a substitute for Trivy/Grype/Docker Scout. |
