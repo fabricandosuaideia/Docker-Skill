@@ -68,6 +68,15 @@ global sob `~/.claude/skills/` ao vivo, sem precisar reiniciar — desde que
 esse diretório já existisse quando a sessão começou. Um `.claude/skills/` de
 projeto totalmente novo precisa reiniciar a sessão para ser observado.
 
+**Cobertura de plataforma:** `install.sh` usa só construções compatíveis com
+POSIX/bash 3.2 (arrays, `${BASH_SOURCE[0]}`, `cp -R`, um `sed` sem sintaxe
+de intervalo exclusiva do GNU) de propósito, para rodar sem alteração no
+toolchain BSD padrão do macOS — mas só foi testado executando de verdade em
+Linux/WSL2 até agora. O `install.ps1` não teve nenhum runtime de PowerShell
+disponível para teste de execução, só revisão estrutural. Se rodar em uma
+plataforma ainda não verificada, abra uma issue de qualquer forma — sucesso
+ou falha, os dois ajudam.
+
 ## Como usar
 
 O Claude Code carrega a skill automaticamente quando é relevante (editando um

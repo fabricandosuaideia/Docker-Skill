@@ -22,7 +22,10 @@ FORCE=0
 UNINSTALL=0
 
 usage() {
-  sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  # `sed 's/^# *//'` (not `\{0,1\}`) deliberately -- macOS ships BSD sed,
+  # not GNU sed, and this simpler form needs no interval-expression support
+  # from either.
+  sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# *//'
 }
 
 for arg in "$@"; do

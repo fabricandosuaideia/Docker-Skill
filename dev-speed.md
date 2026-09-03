@@ -195,6 +195,17 @@ Full policy form (same page) supports per-tier `policy` entries with
 **Restarting the Docker daemon to apply this drops every running container** —
 schedule it, don't do it silently on a shared machine.
 
+**Where that file actually lives depends on how Docker runs, not just the
+OS** (verified against Docker's own docs, 2026-09-03):
+- **Linux with Docker Engine installed directly** (including WSL2 without
+  Docker Desktop, which is where the 3110s→18s numbers in this playbook were
+  measured): `/etc/docker/daemon.json`.
+- **Docker Desktop** (macOS, Windows, or WSL2 *with* Docker Desktop as the
+  backend): `$HOME/.docker/daemon.json` — edit it directly in a text editor,
+  or through the same JSON in Docker Desktop's Settings → Docker Engine
+  panel. Same keys, different path — don't go looking for `/etc/docker/` on
+  a Docker Desktop install.
+
 Check current usage before guessing a number: `docker system df` (add `-v`
 for per-item detail) shows total build-cache size and what's reclaimable
 right now.

@@ -67,6 +67,15 @@ under `~/.claude/skills/` live, no restart needed, as long as that directory
 already existed when the session started. A brand-new project-level
 `.claude/skills/` needs a session restart to be watched.
 
+**Platform coverage:** `install.sh` uses only POSIX/bash-3.2-compatible
+constructs (arrays, `${BASH_SOURCE[0]}`, `cp -R`, a `sed` substitution
+without GNU-only interval syntax) specifically so it runs unmodified on
+macOS's stock BSD toolchain, not just Linux — but it's only been
+execute-tested on Linux/WSL2 so far. `install.ps1` has had no PowerShell
+runtime available to execute-test at all, only a structural review. If you
+run either on a platform it hasn't been verified on, please open an issue
+either way — success or failure both help.
+
 ## Using it
 
 Claude Code loads the skill automatically when it's relevant (editing a

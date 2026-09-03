@@ -258,6 +258,11 @@ Ranked by what's actually measured to matter, not by convention:
 
 ## GPU exposure: what actually changed, and what didn't
 
+**Not applicable on macOS, on any Mac hardware.** No Mac — Apple Silicon or
+Intel — has an NVIDIA GPU, Docker Desktop for Mac runs containers in a Linux
+VM with no GPU passthrough to NVIDIA hardware, and Apple Silicon's own GPU is
+Metal-based, not CUDA. This entire section is a Linux/Windows(WSL2) concern.
+
 **Headline, verified 2026-09-03 against Docker's and NVIDIA's own current
 docs:** the underlying mechanism for exposing a GPU to a container changed —
 **CDI (Container Device Interface) is now the default path** — but this is a
