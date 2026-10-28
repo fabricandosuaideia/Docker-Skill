@@ -1,6 +1,6 @@
 ---
 name: docker-image-playbook
-description: Cut Docker/BuildKit build time and harden images for production. Use when creating, writing, or editing a Dockerfile or docker-compose.yml (including scaffolding one from scratch for a project that has none yet), when a build "feels slow," or before shipping a container.
+description: Cut Docker/BuildKit build time and harden images for production. Use when creating, writing, or editing a Dockerfile or docker-compose.yml (including scaffolding one from scratch for a project that has none yet), when a build "feels slow" or the build cache / disk keeps growing, or before shipping a container.
 license: MIT
 metadata:
   author: Fabricando Sua Ideia - github.com/fabricandosuaideia
@@ -24,12 +24,78 @@ keep this file honest" at the bottom.
 
 | File | Load it when |
 |---|---|
-| **This file** | Always — Phase -1 (scaffolding from zero), Phase 0, the fast checklist, and navigation |
+| **This file** | Always — Phase 0 (measure first), the fast checklist, Phase -1 (scaffolding from zero), and navigation |
 | [`scaffolding-from-zero.md`](scaffolding-from-zero.md) | Full depth behind Phase -1: complete signal tables (every package manager, every framework covered), the full Compose merge/watch mechanics, the monorepo/CI detail, the brownfield reconciliation algorithm, and version floors |
 | [`dev-speed.md`](dev-speed.md) | Actually rewriting a Dockerfile for build speed (Phases 1–7: layer order, cache mounts, `.dockerignore`, pinning refs, GC config, package sizing, `ninja`) |
 | [`production-hardening.md`](production-hardening.md) | Shipping a container — non-root, secrets, multi-stage, CUDA base tiers, scanning, SBOM, `HEALTHCHECK`, size, GPU exposure (CDI), read-only rootfs, lockfiles |
 | [`scripts/audit_dockerfile.py`](scripts/audit_dockerfile.py) | Run it first on any Dockerfile: `python3 ${CLAUDE_SKILL_DIR}/scripts/audit_dockerfile.py <Dockerfile...>` — a mechanical pass over the checklist's grep-able subset (contradictory flags, fragile pins, missing `USER`/`HEALTHCHECK`, secret-shaped `ARG`/`ENV` names, floating tags, and two instruction-order checks: an install behind a source `COPY` in the same stage, or in a stage built `FROM` one that already copied the source). Advisory, not a substitute for Trivy/Grype/Docker Scout — see "Vulnerability scanning" in `production-hardening.md`. |
 | [`scripts/cache_report.py`](scripts/cache_report.py) | The build cache is huge or the disk is filling and you need to know *why*: `python3 ${CLAUDE_SKILL_DIR}/scripts/cache_report.py` groups `docker buildx du` records by the instruction that made them and ranks them by bytes. Read-only; prunes nothing. See `dev-speed.md` Phase 5. |
+
+## Phase 0 — Measure before you optimize
+
+**The single most important lesson here.** A build that looks catastrophically
+slow may be **resource contention, not the layer itself**. On one real
+machine, a CUDA-toolkit `apt-get install` layer measured **1478s** inside a
+full `docker compose build` (9 images, BuildKit running stages concurrently,
+plus ~30 unrelated containers from other projects competing for the same
+CPUs/disk/network) — and **307.5s** when rebuilt in isolation on an otherwise
+idle box. Both numbers are real; only one of them describes the layer's
+actual cost.
+
+Before changing anything:
+- Re-run the slow step in isolation (`docker build --target <stage>`) on as
+  idle a machine as you can get.
+- Check what else is running (`docker ps`, host load average) during a full
+  build — BuildKit parallelizes independent stages, so two unrelated
+  multi-gigabyte downloads/compiles can share one pipe and inflate each
+  other's wall clock without either one being "slow" on its own.
+- Only diagnose and fix the layer itself once you have a number you trust.
+
+**Measure the disk, not just the clock.** The same neglect that makes builds slow
+makes the build cache grow: `docker system df` can say "255 GB" without saying
+why. Rank it before touching anything — `python3
+${CLAUDE_SKILL_DIR}/scripts/cache_report.py` — and check the two numbers that
+explain most of it: the `transferring context:` size in `docker build
+--progress=plain`, and the `COPY` layer size in `docker history`. Cache growth is
+*layer size × invalidation frequency*; a GC number only decides how much of it you
+keep (`dev-speed.md`, Phase 5), it doesn't shrink the rate.
+
+Corollary: don't trust an env var's name to describe what it does. A
+source-compiled CUDA extension (`SageAttention`) build passed `EXT_PARALLEL=4` believing it
+parallelized compilation — reading the actual `setup.py` showed it only
+controls how many **extensions** build concurrently (irrelevant when only two
+exist for the target arch); the real lever missing was `ninja`, unrelated to
+that variable. **Read the source before trusting what a flag's name implies.**
+
+## Fast checklist
+
+Run `scripts/audit_dockerfile.py` first — it catches everything below marked
+(script). What's left needs a human call.
+
+**Build speed** (detail: `dev-speed.md`):
+- [ ] Dependency install comes before `COPY <source>` — also across stages: the source `COPY` lives in leaf stages, never in a stage another stage is built `FROM` (script, heuristic: `copy-before-install`, `install-after-parent-copy`)
+- [ ] The source `COPY` layer and the `transferring context:` size are megabytes, not hundreds of them; if several Dockerfiles share one context, each has its own `<Dockerfile>.dockerignore` rather than one root file that suits only one of them
+- [ ] `--mount=type=cache` on every `pip`/`apt`/`npm`/`uv` install; `PIP_NO_CACHE_DIR`/`--no-cache-dir` NOT set anywhere a cache mount is used (script)
+- [ ] `.dockerignore` excludes tool caches (`.mypy_cache`, `.ruff_cache`, `.pytest_cache`, `*.egg-info`), not just `.git`/`node_modules`
+- [ ] Every pinned upstream commit is fetched by SHA (`git fetch --depth 1 origin <sha>`), not `clone --depth 1 && checkout <sha>` (script)
+- [ ] A version compiled against another stage's library is pinned identically in both stages
+- [ ] `daemon.json` `builder.gc.defaultReservedSpace` is sized per host — above the working set of expensive layers, below what that disk can afford with its required free headroom, judged by the host's role (dev / CI / staging / prod), never copied from another machine (dev-speed.md, Phase 5); confirm it loaded with `docker buildx inspect` (the GC Policy rules)
+- [ ] Installing the narrowest package set that satisfies the need, not a kitchen-sink metapackage
+- [ ] *(native/CUDA extensions only)* `ninja` installed wherever a C++/CUDA extension compiles
+
+**Before shipping** (detail: `production-hardening.md`):
+- [ ] Non-root `USER`; if the container uses a GPU, device access verified under that user, not assumed (script flags root as INFO)
+- [ ] Multi-stage: build tooling absent from the shipped image
+- [ ] *(CUDA images only)* Correct CUDA tier per stage (`-devel` to compile, `-runtime` to run) — or confirmed a PyPI-wheel-only path is smaller
+- [ ] No secret via `ARG`/`ENV` (script flags secret-shaped names); `--mount=type=secret` used instead
+- [ ] Base image(s) pinned by digest, with an automated bump path (script flags missing tags/digests as INFO)
+- [ ] Vulnerability scan in CI, gated with `--ignore-unfixed` or equivalent
+- [ ] `HEALTHCHECK` present (script flags if entirely absent), never triggers expensive work (GPU inference, a model load), `--start-period` sized for the real startup time
+- [ ] Image size ranked by measured bytes, not convention
+- [ ] *(GPU images only)* GPU exposure verified against current Compose/toolkit docs, not a stale blog post
+- [ ] `read_only: true` attempted, write paths enumerated empirically, JIT/model caches on a named volume
+- [ ] Lockfile with hash/lock enforcement (`uv sync --locked`, `pip --require-hashes`, `npm ci`), same installer in CI and Dockerfile
+- [ ] Multi-platform explicitly decided, not defaulted (usually skip for a GPU image)
 
 ## Phase -1 — Scaffolding from zero: infer, verify, ask sparingly
 
@@ -328,72 +394,6 @@ run these has no reason to ask the user to eyeball the result.
       {{.Size}}'` — confirms non-root, the real (non-dev-server) command in exec
       form, and gives a size baseline.
 
-## Phase 0 — Measure before you optimize
-
-**The single most important lesson here.** A build that looks catastrophically
-slow may be **resource contention, not the layer itself**. On one real
-machine, a CUDA-toolkit `apt-get install` layer measured **1478s** inside a
-full `docker compose build` (9 images, BuildKit running stages concurrently,
-plus ~30 unrelated containers from other projects competing for the same
-CPUs/disk/network) — and **307.5s** when rebuilt in isolation on an otherwise
-idle box. Both numbers are real; only one of them describes the layer's
-actual cost.
-
-Before changing anything:
-- Re-run the slow step in isolation (`docker build --target <stage>`) on as
-  idle a machine as you can get.
-- Check what else is running (`docker ps`, host load average) during a full
-  build — BuildKit parallelizes independent stages, so two unrelated
-  multi-gigabyte downloads/compiles can share one pipe and inflate each
-  other's wall clock without either one being "slow" on its own.
-- Only diagnose and fix the layer itself once you have a number you trust.
-
-**Measure the disk, not just the clock.** The same neglect that makes builds slow
-makes the build cache grow: `docker system df` can say "255 GB" without saying
-why. Rank it before touching anything — `python3
-${CLAUDE_SKILL_DIR}/scripts/cache_report.py` — and check the two numbers that
-explain most of it: the `transferring context:` size in `docker build
---progress=plain`, and the `COPY` layer size in `docker history`. Cache growth is
-*layer size × invalidation frequency*; a GC number only decides how much of it you
-keep (`dev-speed.md`, Phase 5), it doesn't shrink the rate.
-
-Corollary: don't trust an env var's name to describe what it does. This
-project's `SageAttention` build passed `EXT_PARALLEL=4` believing it
-parallelized compilation — reading the actual `setup.py` showed it only
-controls how many **extensions** build concurrently (irrelevant when only two
-exist for the target arch); the real lever missing was `ninja`, unrelated to
-that variable. **Read the source before trusting what a flag's name implies.**
-
-## Fast checklist
-
-Run `scripts/audit_dockerfile.py` first — it catches everything below marked
-(script). What's left needs a human call.
-
-**Build speed** (detail: `dev-speed.md`):
-- [ ] Dependency install comes before `COPY <source>` — also across stages: the source `COPY` lives in leaf stages, never in a stage another stage is built `FROM` (script, heuristic: `copy-before-install`, `install-after-parent-copy`)
-- [ ] The source `COPY` layer and the `transferring context:` size are megabytes, not hundreds of them; if several Dockerfiles share one context, each has its own `<Dockerfile>.dockerignore` rather than one root file that suits only one of them
-- [ ] `--mount=type=cache` on every `pip`/`apt`/`npm`/`uv` install; `PIP_NO_CACHE_DIR`/`--no-cache-dir` NOT set anywhere a cache mount is used (script)
-- [ ] `.dockerignore` excludes tool caches (`.mypy_cache`, `.ruff_cache`, `.pytest_cache`, `*.egg-info`), not just `.git`/`node_modules`
-- [ ] Every pinned upstream commit is fetched by SHA (`git fetch --depth 1 origin <sha>`), not `clone --depth 1 && checkout <sha>` (script)
-- [ ] A version compiled against another stage's library is pinned identically in both stages
-- [ ] `daemon.json` `builder.gc.defaultReservedSpace` is sized per host — above the working set of expensive layers, below what that disk can afford with its required free headroom, judged by the host's role (dev / CI / staging / prod), never copied from another machine (dev-speed.md, Phase 5); confirm it loaded with `docker buildx inspect` (the GC Policy rules)
-- [ ] Installing the narrowest package set that satisfies the need, not a kitchen-sink metapackage
-- [ ] `ninja` installed wherever a C++/CUDA extension compiles
-
-**Before shipping** (detail: `production-hardening.md`):
-- [ ] Non-root `USER`; GPU device access verified under that user, not assumed (script flags root as INFO)
-- [ ] Multi-stage: build tooling absent from the shipped image
-- [ ] Correct CUDA tier per stage (`-devel` to compile, `-runtime` to run) — or confirmed a PyPI-wheel-only path is smaller
-- [ ] No secret via `ARG`/`ENV` (script flags secret-shaped names); `--mount=type=secret` used instead
-- [ ] Base image(s) pinned by digest, with an automated bump path (script flags missing tags/digests as INFO)
-- [ ] Vulnerability scan in CI, gated with `--ignore-unfixed` or equivalent
-- [ ] `HEALTHCHECK` present (script flags if entirely absent), never triggers GPU inference, `--start-period` sized for real model-load time
-- [ ] Image size ranked by measured bytes, not convention
-- [ ] GPU exposure verified against current Compose/toolkit docs, not a stale blog post
-- [ ] `read_only: true` attempted, write paths enumerated empirically, JIT/model caches on a named volume
-- [ ] Lockfile with hash/lock enforcement (`uv sync --locked`, `pip --require-hashes`, `npm ci`), same installer in CI and Dockerfile
-- [ ] Multi-platform explicitly decided, not defaulted — usually skip for a GPU image
-
 ## Explicitly unverified — re-check before relying on these
 
 Carried forward honestly rather than silently asserted:
@@ -423,7 +423,7 @@ release cycle, and neither Docker's nor NVIDIA's user-facing docs had fully
 caught up with their own toolkit's default change at time of writing.
 
 Before asserting a Docker/BuildKit/NVIDIA-toolkit fact you're not sure is
-still current: run a research pass (a web-search agent, or this user's own
+still current: run a research pass (a web-search agent, or your own
 research tooling if available) against official sources —
 `docs.docker.com`, `docs.nvidia.com`, `catalog.ngc.nvidia.com`, the OWASP
 Docker Security Cheat Sheet, and the tool's own repo/release notes — rather
@@ -434,9 +434,10 @@ next reader than a confident guess that turns out stale.
 
 ## Worked example
 
-One real project's ComfyUI (CUDA 13 + PyTorch + a source-compiled
-SageAttention extension) + backend/worker (Python/FastAPI/Celery) image set,
-worked through this exact playbook in one session:
+A case study, not a template — the numbers belong to that machine and
+project. One GPU/ML image set (ComfyUI on CUDA 13 + PyTorch + a
+source-compiled SageAttention extension, plus a Python/FastAPI/Celery
+backend/worker), worked through this playbook in one session:
 
 | Phase | What broke / what was applied | Result |
 |---|---|---|

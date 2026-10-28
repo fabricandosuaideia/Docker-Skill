@@ -52,16 +52,16 @@ to resolve, not to persist in a layer.
 
 **Multi-stage: the source `COPY` belongs in the leaf stages, never in a stage
 that other stages build `FROM`.** A stage inherits its parent's layers *and
-its parent's invalidation*. If `prod` does `COPY . .` and `prod-claude` is
+its parent's invalidation*. If `prod` does `COPY . .` and `prod-tools` is
 `FROM prod`, every source edit invalidates the `COPY`, and everything
-`prod-claude` installs after it re-runs — even though that install has
+`prod-tools` installs after it re-runs — even though that install has
 nothing to do with your code:
 
 ```dockerfile
 # BAD — the expensive, stable install sits behind the source COPY
 FROM base AS prod
 COPY . .
-FROM prod AS prod-claude
+FROM prod AS prod-tools
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
  && npm install -g some-cli                   # re-runs on every source edit
 
@@ -69,14 +69,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl \
 FROM base AS cli-base
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
  && npm install -g some-cli
-FROM cli-base AS prod-claude
+FROM cli-base AS prod-tools
 COPY . .
 FROM base AS prod
 COPY . .
 ```
 
 Measured 2026-10-28 (Docker 29.9.2): edit one source file, rebuild
-`--target prod-claude`. BAD: the `RUN` printed its marker again (re-executed).
+`--target prod-tools`. BAD: the `RUN` printed its marker again (re-executed).
 GOOD: the `RUN` stayed `CACHED`. `scripts/audit_dockerfile.py` flags the BAD
 shape (`install-after-parent-copy`) from the text alone; on a real
 three-variant Dockerfile it named exactly the three stages a person had
