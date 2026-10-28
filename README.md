@@ -25,9 +25,10 @@ it was checked — see `SKILL.md`'s "Explicitly unverified" table for what
 |---|---|
 | `SKILL.md` | Navigation, scaffolding a Docker setup from zero (infer from the repo, ask sparingly, dev/prod separation, verify instead of asking), the one lesson that matters most for existing builds (measure before you optimize), a fast checklist, and a worked example. Loads first. |
 | `scaffolding-from-zero.md` | Full depth behind the scaffolding phase: complete signal tables (every package manager, every framework covered), Compose merge/watch mechanics, monorepo/CI detail, the brownfield reconciliation algorithm, version floors. |
-| `dev-speed.md` | Build speed: layer ordering, BuildKit cache mounts (and the two ways to silently defeat them), `.dockerignore` hygiene beyond the obvious, pinning upstream refs correctly, GC sizing, right-sized package installs, `ninja` for native/CUDA extension builds. |
+| `dev-speed.md` | Build speed: layer ordering, BuildKit cache mounts (and the two ways to silently defeat them), `.dockerignore` hygiene beyond the obvious, pinning upstream refs correctly, multi-stage `COPY` placement, shared-context `.dockerignore` (per-Dockerfile and allowlist forms), GC sizing and how to verify it took effect, right-sized package installs, `ninja` for native/CUDA extension builds. |
 | `production-hardening.md` | Shipping: non-root users (and the GPU-specific gotchas under them), multi-stage builds, CUDA base-image tiers, secrets (`--mount=type=secret`, never `ARG`/`ENV`), digest pinning, vulnerability scanning, SBOM/provenance, `HEALTHCHECK`, image size, GPU exposure (CDI vs. the legacy runtime), read-only rootfs, lockfiles, multi-platform builds. |
-| `scripts/audit_dockerfile.py` | A mechanical, dependency-free pass over one or more Dockerfiles for the checklist's grep-able subset: contradictory cache-mount flags, fragile shallow-clone pins, secret-shaped `ARG`/`ENV` names, floating/undigested tags, missing `USER`/`HEALTHCHECK`. Advisory, not a substitute for Trivy/Grype/Docker Scout. |
+| `scripts/audit_dockerfile.py` | A mechanical, dependency-free pass over one or more Dockerfiles for the checklist's grep-able subset: contradictory cache-mount flags, fragile shallow-clone pins, secret-shaped `ARG`/`ENV` names, floating/undigested tags, missing `USER`/`HEALTHCHECK`, and two instruction-order checks (an install behind a source `COPY`, in the same stage or a parent stage). Advisory, not a substitute for Trivy/Grype/Docker Scout. |
+| `scripts/cache_report.py` | Read-only report on *why* the BuildKit cache is big: groups `docker buildx du` records by the instruction that created them and ranks them by bytes, flagging whole-tree `COPY` layers that carry more than source and install layers recreated under many parent chains. |
 
 GPU/ML (CUDA, PyTorch) images get their own callouts throughout — this
 started as the playbook for one project's CUDA 13 + PyTorch + a
@@ -103,10 +104,11 @@ either way — success or failure both help.
 
 Claude Code loads the skill automatically when it's relevant (editing a
 Dockerfile, a build failing or feeling slow, shipping a container) — nothing
-to invoke by hand. To run the audit script yourself:
+to invoke by hand. To run the scripts yourself:
 
 ```sh
 python3 ~/.claude/skills/docker-image-playbook/scripts/audit_dockerfile.py Dockerfile
+python3 ~/.claude/skills/docker-image-playbook/scripts/cache_report.py   # why is the build cache big?
 ```
 
 ## Keeping it current

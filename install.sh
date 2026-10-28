@@ -36,7 +36,7 @@ UNINSTALL=0
 # The skill is these files and nothing else. Used to validate a download (or
 # a local clone) before anything on disk is touched.
 REQUIRED_FILES=(dev-speed.md production-hardening.md scaffolding-from-zero.md)
-REQUIRED_SCRIPTS=(audit_dockerfile.py)
+REQUIRED_SCRIPTS=(audit_dockerfile.py cache_report.py)
 
 print_status()  { echo "-> $1"; }
 print_success() { echo "OK $1"; }
@@ -282,5 +282,6 @@ else
   echo "~/.claude/skills/ live. Otherwise it's ready the next time you start one."
 fi
 echo ""
-echo "Run the audit script yourself with:"
+echo "Run the scripts yourself with:"
 echo "  python3 ${TARGET}/scripts/audit_dockerfile.py Dockerfile"
+echo "  python3 ${TARGET}/scripts/cache_report.py   # why is the build cache big?"

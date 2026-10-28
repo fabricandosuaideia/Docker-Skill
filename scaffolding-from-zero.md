@@ -316,8 +316,12 @@ produces — production is always last): `base` → `deps` (full install, dev
 tooling included) → `dev` (FROM `deps`; watcher command; the *only* stage
 that may contain nodemon/watchfiles/air/cargo-watch) → `build`
 (compile/bundle) → `prod` (FROM a minimal runtime; only the artifact +
-production deps; non-root; the real server command). A repo with no compile
-step and no dev-only tooling (a plain script service) needs only two stages
+production deps; non-root; the real server command). Put the source
+`COPY` in the leaf stages only — never in a stage that another stage builds
+`FROM` (`prod` copying source and `prod-claude` being `FROM prod` re-runs
+the latter's installs on every edit; measured in `dev-speed.md`, Phase 1).
+A repo with no compile step and no dev-only tooling (a plain script
+service) needs only two stages
 (`base` → `prod`) — don't invent a dev stage nobody will target. A `tests/`
 dir + a test runner + CI gets a `test` stage that branches off `dev` and is
 built explicitly with `--target test` in CI — BuildKit only builds a

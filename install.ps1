@@ -55,7 +55,7 @@ $SkillName = "docker-image-playbook"
 # The skill is these files and nothing else. Used to validate a download (or
 # a local clone) before anything on disk is touched.
 $RequiredFiles = @("dev-speed.md", "production-hardening.md", "scaffolding-from-zero.md")
-$RequiredScripts = @("audit_dockerfile.py")
+$RequiredScripts = @("audit_dockerfile.py", "cache_report.py")
 
 function Write-Status  { param($m) Write-Host "-> $m" }
 function Write-Ok      { param($m) Write-Host "OK $m" -ForegroundColor Green }
@@ -253,8 +253,9 @@ try {
     Write-Host "~\.claude\skills\ live. Otherwise it's ready the next time you start one."
   }
   Write-Host ""
-  Write-Host "Run the audit script yourself with:"
+  Write-Host "Run the scripts yourself with:"
   Write-Host "  python3 $Dest\scripts\audit_dockerfile.py Dockerfile"
+  Write-Host "  python3 $Dest\scripts\cache_report.py   # why is the build cache big?"
 }
 finally {
   if ($Tmp -and (Test-Path -LiteralPath $Tmp)) { Remove-Item -LiteralPath $Tmp -Recurse -Force -ErrorAction SilentlyContinue }

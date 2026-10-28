@@ -50,6 +50,51 @@ RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked
 Note the `--mount=type=bind` for the lockfile instead of `COPY` — it's needed
 to resolve, not to persist in a layer.
 
+**Multi-stage: the source `COPY` belongs in the leaf stages, never in a stage
+that other stages build `FROM`.** A stage inherits its parent's layers *and
+its parent's invalidation*. If `prod` does `COPY . .` and `prod-claude` is
+`FROM prod`, every source edit invalidates the `COPY`, and everything
+`prod-claude` installs after it re-runs — even though that install has
+nothing to do with your code:
+
+```dockerfile
+# BAD — the expensive, stable install sits behind the source COPY
+FROM base AS prod
+COPY . .
+FROM prod AS prod-claude
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+ && npm install -g some-cli                   # re-runs on every source edit
+
+# GOOD — heavy + stable first, source last, once per leaf
+FROM base AS cli-base
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+ && npm install -g some-cli
+FROM cli-base AS prod-claude
+COPY . .
+FROM base AS prod
+COPY . .
+```
+
+Measured 2026-10-28 (Docker 29.9.2): edit one source file, rebuild
+`--target prod-claude`. BAD: the `RUN` printed its marker again (re-executed).
+GOOD: the `RUN` stayed `CACHED`. `scripts/audit_dockerfile.py` flags the BAD
+shape (`install-after-parent-copy`) from the text alone; on a real
+three-variant Dockerfile it named exactly the three stages a person had
+diagnosed by hand.
+
+- A `dev` stage whose compose service bind-mounts the source (`./:/app`) needs
+  no `COPY` at all — the mount shadows it. Keep the `COPY` only if that image
+  is also run without the mount (CI, a test target).
+- The same logic applies to every variant sharing a base: worker, test,
+  debug, "with-CLI" images. Hoist what they share into a stage they all
+  derive from; give each leaf its own final `COPY`.
+- **Parallel worktrees / agent lanes**: BuildKit keys a `COPY` layer on file
+  *contents*, not path or mtime. Measured: the same tree copied to a different
+  directory with every mtime refreshed → `COPY` was `CACHED`. So N worktrees
+  on the same commit share their cache; the cost multiplies only for trees
+  whose contents diverge — and then it multiplies by whatever sits *behind* a
+  source `COPY`, which is why the rule above is worth N× in that workflow.
+
 ## Phase 2 — Cache mounts, and the two ways to defeat them by accident
 
 BuildKit's `--mount=type=cache` survives *between* builds, unlike a normal
@@ -95,6 +140,12 @@ for 9 images.
 wheel a builder stage downloads is available to the final stage for free if
 both mount the same `target`.
 
+**A cache mount never lands in the image**, so it can't trip a "no caches in
+the final image" scan gate. Measured 2026-10-28: a `RUN --mount=type=cache`
+that wrote a 20 MB file into the mounted directory produced a `0B` layer in
+`docker history`, and the directory did not exist in the running container.
+Adding cache mounts to a stage that lacked them is safe on that axis.
+
 ## Phase 3 — `.dockerignore` hygiene beyond the obvious
 
 Everyone excludes `.git`, `node_modules`, `.venv`. The category people miss:
@@ -129,6 +180,62 @@ ignore file worked — it's silent when it doesn't match what you expect):
 ```
 docker run --rm --entrypoint sh <image> -c 'du -sh /app/.mypy_cache 2>/dev/null || echo clean'
 ```
+
+### Measure the context and the `COPY` layer — before and after
+
+Two numbers tell you whether the ignore file works, without reading it:
+
+```sh
+# bytes sent to the daemon on every build
+docker build --progress=plain . 2>&1 | grep 'transferring context'
+# bytes the source COPY wrote into the image
+docker history --format '{{.Size}}\t{{.CreatedBy}}' <image> | grep COPY
+```
+
+A source tree is megabytes. A whole-tree `COPY . .` in the hundreds of MB is
+carrying something that isn't source.
+
+**Cache growth is `layer size × how often it's invalidated`, not size alone.**
+Measured 2026-10-28: a 30 MB directory in the context made the `COPY . .` layer
+30 MB. Changing one byte inside that directory — nothing the app reads — re-ran
+the `COPY` and wrote another full 30 MB layer. A directory that is rewritten by
+a dev server (`.next/`, `dist/`, `storybook-static/`) does that on every build,
+and each build leaves its own multi-hundred-MB record behind. On one real
+108 GB cache, the 122 records that share one `[stage-1 6/6] COPY . .`
+description totalled 34 GB (avg 0.28 GB each, ~32% of the cache) — see Phase 5
+for the tool that found it.
+
+**Polyglot repos (a Python/Go API next to a `web/` frontend, etc.):** first
+prove the image never reads the other toolchain's directory (`grep` the app
+source, migrations, scripts, entrypoints, every compose file and every
+`COPY --from`); if nothing does, ignore the **whole directory**, not just its
+`node_modules`. Listing `web/node_modules` and `web/.next` leaves the next
+generated folder (`out/`, `.turbo/`, …) as tomorrow's leak.
+
+**Shared context, different needs.** The root `.dockerignore` applies to
+*every* Dockerfile built from that context. Measured: adding `web/` to it took
+the API image's `COPY` layer from 30 MB to 82 B — and a second Dockerfile in
+the same context doing `COPY web /web` then failed with `"/web": not found`.
+When more than one image builds from one context, use a per-Dockerfile file
+(`docker/Dockerfile.dockerignore` beside `docker/Dockerfile`; BuildKit prefers
+it over the root file): measured, the API build's context dropped to 398 B
+while the web build kept its 30 MB.
+
+**Allowlist instead of denylist** when the image needs a few paths out of a
+large repo:
+
+```
+*
+!app
+!pyproject.toml
+```
+
+A denylist fails *silently* — a new generated folder just bloats every build.
+An allowlist fails *loudly*: measured, a `COPY scripts/run.sh` against an
+allowlist that omitted `scripts/` stopped the build with
+`"/scripts/run.sh": not found`. The price is one `!` line per new path the
+image needs. `scripts/audit_dockerfile.py` reports a whole-tree `COPY` with no
+`.dockerignore` in sight (`no-dockerignore`).
 
 ## Phase 4 — Pin upstream references correctly, not just present-tense-correctly
 
@@ -175,16 +282,65 @@ took 2 seconds." A build cache sized for casual use (default `reservedSpace`
 the expensive layers, making a "cache hit" build silently pay full price
 again with no error message explaining why.
 
-`daemon.json`, current key verified against Docker's own reference
-(2026-09-03; `defaultKeepStorage` is the **old**, no-longer-current name —
-don't use it):
+`daemon.json`. **Docker's own pages disagree on the key name** (checked
+2026-10-28): the `dockerd` reference
+(<https://docs.docker.com/reference/cli/dockerd/>) shows
+`"defaultReservedSpace"`, while the GC guide
+(<https://docs.docker.com/build/cache/garbage-collection/>) still shows
+`"defaultKeepStorage"` for the `docker` driver. Verified on Docker Engine
+29.9.2: `defaultReservedSpace` is accepted and resolves to policy rules
+(next section shows how to see that). Whether `defaultKeepStorage` is still
+accepted was **not** tested (it needs a daemon restart) — an earlier version
+of this file called it "the old name"; that is not established.
+
+### Size it for *this* host — there is no portable number
+
+The right budget depends on the disk and on the host's job, so derive it
+case by case; do not copy a figure from another machine (including the
+examples in this file). Collect, per host:
+
+```sh
+df -h /var/lib/docker          # total/free where Docker's data lives (Docker Desktop: the VM's disk limit in Settings)
+docker system df               # images, volumes, build cache today
+python3 ${CLAUDE_SKILL_DIR}/scripts/cache_report.py   # which layers make up the cache, and how much is shared with images
+```
+
+and answer four questions:
+
+1. **What is this host for?**
+   - *Dev workstation / WSL2 / VM with a fixed disk* — you want warm
+     rebuilds, but the cache shares the disk with images, volumes and the
+     OS; the budget must fit what's left, not what's ideal.
+   - *CI runner* — usually ephemeral; the Docker-side GC number barely
+     matters, the cache lives in a registry or the CI cache instead (see
+     `scaffolding-from-zero.md`, CI build cache).
+   - *Staging / production* — prefer not to build there at all (build once,
+     promote the image; `SKILL.md` Phase -1). If the host does build, favor a
+     small budget plus a free-space guard over a large cache, so a build can
+     never fill the disk the services run on.
+2. **Lower bound — the working set.** The summed size of the *distinct,
+   expensive* layers of the projects built on this host (the large,
+   low-count groups in `cache_report.py`, plus layers whose cold cost you
+   measured per Phase 0). Below this, builds pay cold again.
+3. **Upper bound — what the disk can afford.** Free space minus the headroom
+   you decide this host must always keep, minus the records shared with images
+   (they sit outside the limit, see below). Write the headroom down as a
+   rule for the host; don't leave it implicit.
+4. **Do the bounds cross?** If the lower bound exceeds the upper, no GC value
+   fixes it. Shrink the layers and the invalidation rate (Phases 1 and 3), move
+   the heavy builds to a bigger host or a remote cache, or accept cold builds
+   for that project.
+
+Pick a value between the bounds, apply it, then re-measure after a couple of
+weeks of real use (warm vs. cold rebuild time, `docker system df`) and adjust.
+The same project can need different values on a laptop and on a build server.
 
 ```json
 {
   "builder": {
     "gc": {
       "enabled": true,
-      "defaultReservedSpace": "80GB"
+      "defaultReservedSpace": "<BUDGET>GB"
     }
   }
 }
@@ -209,6 +365,62 @@ OS** (verified against Docker's own docs, 2026-09-03):
 Check current usage before guessing a number: `docker system df` (add `-v`
 for per-item detail) shows total build-cache size and what's reclaimable
 right now.
+
+### Prove the setting took effect — reading needs no restart
+
+A typo'd or ignored key fails silently; the daemon just keeps the defaults.
+The resolved policy is visible:
+
+```sh
+docker buildx inspect | sed -n '/GC Policy/,$p'
+```
+
+Example, measured 2026-10-28 on one host whose budget was set to `80GB`
+(illustrative, not a recommendation): rules 1–3 came back with
+`Reserved Space: 80GiB`, rule 0 (local contexts and cache mounts older
+than 48h) with `Max Used Space: 11.05GiB`. If you still see ~10 GB, your edit
+didn't load.
+
+### The number is also the disk bill — and it isn't a hard ceiling
+
+GC trades disk for cache misses; it doesn't make builds cheaper. Raising the
+reservation so expensive layers survive is right when the disk can afford it,
+and a way to fill a small WSL2/VM disk when it can't. Two observations from
+one host, same day (its budget was `80GB`):
+
+- `docker buildx du` showed **84.66 GB private + 23.89 GB shared = 108.55
+  GB**. The private records sat near the setting (80 GiB ≈ 85.9 GB) while the
+  shared ones were above it. That fits Docker's description of the policies
+  (it prunes cache not held by images), but it is one observation, not a
+  tested rule — I did not remove images to watch the number fall. Treat the
+  budget as "roughly what unshared cache may use", not "the most the cache
+  can occupy"; plan the upper bound above with the shared portion on top.
+- For a hard guard against *"the disk filled up"* specifically, the `dockerd`
+  reference's policy example also lists `minFreeSpace` and `maxUsedSpace`
+  keys. Documented, **not tested** here — verify with `docker buildx inspect`
+  after applying, as above.
+
+The durable fix for a cache that keeps growing is smaller layers and fewer
+invalidations (Phases 1 and 3), not a bigger or smaller GC number.
+
+### Find out *why* the cache is big
+
+`docker system df` says how much, not why. `scripts/cache_report.py` groups
+`docker buildx du --format json` records by the instruction that made them
+(read-only; prunes nothing; sub-second on 1,158 records):
+
+```sh
+python3 ${CLAUDE_SKILL_DIR}/scripts/cache_report.py --top 10
+```
+
+On the 108 GB cache above it surfaced, in one screen, a `COPY . .`
+description with 122 records averaging 0.28 GB (34 GB), and an
+`apt-get install` line recreated under 34 different parent chains (15 GB).
+Read the output as evidence, not a verdict: BuildKit keys a layer on its
+instruction *and* its parent chain, so the same instruction appearing N times
+means N different parents — an upstream layer changed N times, or N projects
+share the same boilerplate line. Tell them apart by Dockerfile before
+changing anything.
 
 ## Phase 6 — Install the smallest package set that satisfies the actual need
 

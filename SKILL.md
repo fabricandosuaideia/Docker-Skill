@@ -4,7 +4,7 @@ description: Cut Docker/BuildKit build time and harden images for production. Us
 license: MIT
 metadata:
   author: Fabricando Sua Ideia - github.com/fabricandosuaideia
-  version: "1.1.0"
+  version: "1.2.0"
 ---
 
 # Docker / BuildKit Image Playbook
@@ -28,7 +28,8 @@ keep this file honest" at the bottom.
 | [`scaffolding-from-zero.md`](scaffolding-from-zero.md) | Full depth behind Phase -1: complete signal tables (every package manager, every framework covered), the full Compose merge/watch mechanics, the monorepo/CI detail, the brownfield reconciliation algorithm, and version floors |
 | [`dev-speed.md`](dev-speed.md) | Actually rewriting a Dockerfile for build speed (Phases 1–7: layer order, cache mounts, `.dockerignore`, pinning refs, GC config, package sizing, `ninja`) |
 | [`production-hardening.md`](production-hardening.md) | Shipping a container — non-root, secrets, multi-stage, CUDA base tiers, scanning, SBOM, `HEALTHCHECK`, size, GPU exposure (CDI), read-only rootfs, lockfiles |
-| [`scripts/audit_dockerfile.py`](scripts/audit_dockerfile.py) | Run it first on any Dockerfile: `python3 ${CLAUDE_SKILL_DIR}/scripts/audit_dockerfile.py <Dockerfile...>` — a mechanical pass over the checklist's grep-able subset (contradictory flags, fragile pins, missing `USER`/`HEALTHCHECK`, secret-shaped `ARG`/`ENV` names, floating tags). Advisory, not a substitute for Trivy/Grype/Docker Scout — see "Vulnerability scanning" in `production-hardening.md`. |
+| [`scripts/audit_dockerfile.py`](scripts/audit_dockerfile.py) | Run it first on any Dockerfile: `python3 ${CLAUDE_SKILL_DIR}/scripts/audit_dockerfile.py <Dockerfile...>` — a mechanical pass over the checklist's grep-able subset (contradictory flags, fragile pins, missing `USER`/`HEALTHCHECK`, secret-shaped `ARG`/`ENV` names, floating tags, and two instruction-order checks: an install behind a source `COPY` in the same stage, or in a stage built `FROM` one that already copied the source). Advisory, not a substitute for Trivy/Grype/Docker Scout — see "Vulnerability scanning" in `production-hardening.md`. |
+| [`scripts/cache_report.py`](scripts/cache_report.py) | The build cache is huge or the disk is filling and you need to know *why*: `python3 ${CLAUDE_SKILL_DIR}/scripts/cache_report.py` groups `docker buildx du` records by the instruction that made them and ranks them by bytes. Read-only; prunes nothing. See `dev-speed.md` Phase 5. |
 
 ## Phase -1 — Scaffolding from zero: infer, verify, ask sparingly
 
@@ -147,7 +148,10 @@ condition baked in" is the wrong shape, and why the base file must always be the
       included) → `dev` (FROM deps; watcher command; the *only* stage that may
       contain nodemon/watchfiles/air/cargo-watch) → `builder` (compile/bundle) →
       `prod` (FROM a minimal runtime; only the artifact + production deps; non-root;
-      the real server command).
+      the real server command). **The source `COPY` goes in the leaf stages only** —
+      never in a stage another stage builds `FROM`, or every source edit re-runs
+      whatever the children install (`dev-speed.md`, Phase 1; the audit script
+      flags it).
 - [ ] `compose.yaml` describes the **production shape**: `build: {target: prod}` (or,
       once an image is published, `image:` with **no `build:` key at all** — see
       below), no bind mount, no published dev port.
@@ -287,6 +291,10 @@ Every one of these is sub-second-to-seconds, mutates nothing on a static check, 
 turns "I think this is right" into "here is the passing output." An agent that can
 run these has no reason to ask the user to eyeball the result.
 
+- [ ] `python3 ${CLAUDE_SKILL_DIR}/scripts/audit_dockerfile.py <Dockerfile...>` — the
+      text-only pass first: it is the one check here that sees instruction *order*
+      (an install behind a source `COPY`, locally or through a parent stage).
+
 - [ ] `docker build --check .` (or `docker compose build --check` when a compose
       file with `build:` keys exists — it resolves each service's context/target/args
       exactly as Compose will, and is the *only* one of the two that catches a
@@ -340,6 +348,15 @@ Before changing anything:
   other's wall clock without either one being "slow" on its own.
 - Only diagnose and fix the layer itself once you have a number you trust.
 
+**Measure the disk, not just the clock.** The same neglect that makes builds slow
+makes the build cache grow: `docker system df` can say "255 GB" without saying
+why. Rank it before touching anything — `python3
+${CLAUDE_SKILL_DIR}/scripts/cache_report.py` — and check the two numbers that
+explain most of it: the `transferring context:` size in `docker build
+--progress=plain`, and the `COPY` layer size in `docker history`. Cache growth is
+*layer size × invalidation frequency*; a GC number only decides how much of it you
+keep (`dev-speed.md`, Phase 5), it doesn't shrink the rate.
+
 Corollary: don't trust an env var's name to describe what it does. This
 project's `SageAttention` build passed `EXT_PARALLEL=4` believing it
 parallelized compilation — reading the actual `setup.py` showed it only
@@ -353,12 +370,13 @@ Run `scripts/audit_dockerfile.py` first — it catches everything below marked
 (script). What's left needs a human call.
 
 **Build speed** (detail: `dev-speed.md`):
-- [ ] Dependency install comes before `COPY <source>` (script can't check this — it's about instruction order, not text)
+- [ ] Dependency install comes before `COPY <source>` — also across stages: the source `COPY` lives in leaf stages, never in a stage another stage is built `FROM` (script, heuristic: `copy-before-install`, `install-after-parent-copy`)
+- [ ] The source `COPY` layer and the `transferring context:` size are megabytes, not hundreds of them; if several Dockerfiles share one context, each has its own `<Dockerfile>.dockerignore` rather than one root file that suits only one of them
 - [ ] `--mount=type=cache` on every `pip`/`apt`/`npm`/`uv` install; `PIP_NO_CACHE_DIR`/`--no-cache-dir` NOT set anywhere a cache mount is used (script)
 - [ ] `.dockerignore` excludes tool caches (`.mypy_cache`, `.ruff_cache`, `.pytest_cache`, `*.egg-info`), not just `.git`/`node_modules`
 - [ ] Every pinned upstream commit is fetched by SHA (`git fetch --depth 1 origin <sha>`), not `clone --depth 1 && checkout <sha>` (script)
 - [ ] A version compiled against another stage's library is pinned identically in both stages
-- [ ] `daemon.json` `builder.gc.defaultReservedSpace` is sized for the project's actual layer sizes, not the ~10GB default
+- [ ] `daemon.json` `builder.gc.defaultReservedSpace` is sized per host — above the working set of expensive layers, below what that disk can afford with its required free headroom, judged by the host's role (dev / CI / staging / prod), never copied from another machine (dev-speed.md, Phase 5); confirm it loaded with `docker buildx inspect` (the GC Policy rules)
 - [ ] Installing the narrowest package set that satisfies the need, not a kitchen-sink metapackage
 - [ ] `ninja` installed wherever a C++/CUDA extension compiles
 
@@ -392,6 +410,8 @@ Carried forward honestly rather than silently asserted:
 | Whether `docker login dhi.io` is required in every environment to pull Docker Hardened Images, even though DHI became free/Apache-2.0 on 2025-12-17 | Verified true in at least one anonymous-pull test; not confirmed as universal across all registry configurations |
 | Exact Compose version that introduced the `include:` top-level element and `compose up --wait` | Landed in the Compose v2.x line (`include` ~v2.20.0, 2023-07); not independently re-verified against release notes for this pass |
 | Docker Scout free-tier repository/image-size limits | Sourced from pricing-aggregator sites, not Docker's own current pricing page — vendor limits drift, re-check before citing a number |
+| `daemon.json` GC key name: `defaultReservedSpace` vs `defaultKeepStorage` | Docker's own pages disagree (dockerd reference vs the GC guide, checked 2026-10-28). `defaultReservedSpace` verified accepted on Engine 29.9.2; `defaultKeepStorage` not tested (needs a daemon restart) |
+| `minFreeSpace` / `maxUsedSpace` as a hard disk guard in `daemon.json` GC policies | Shown in the dockerd reference's policy example; not applied or tested on a real host |
 | Whether corepack (`corepack enable pnpm`/`yarn`) remains bundled-by-default in the newest 2026 Node major | Community-reported churn around unbundling; verify with `corepack --version` in the chosen base image rather than assuming |
 
 ## How to keep this file honest
@@ -425,7 +445,7 @@ worked through this exact playbook in one session:
 | dev-speed Phase 1 (layer order) | `COPY backend/ ./` sat before the dependency install in 4 images; any source edit invalidated a ~20-minute install | Moved dependency install before the source copy, with a stub package directory |
 | dev-speed Phase 3 (`.dockerignore`) | `.mypy_cache` (119 MB) had no ignore entry; baked into 4 images, 94% of build context transferred every build | Added `.mypy_cache`/`.ruff_cache`/`*.egg-info` to `.dockerignore` |
 | dev-speed Phase 2 (cache mounts) | `PIP_NO_CACHE_DIR=1` + `--no-cache-dir` on every image; no apt cache mount; a 554 MB torch wheel downloaded twice per build | Removed both pip-cache-disabling settings, added pip+apt cache mounts across 4 Dockerfiles |
-| dev-speed Phase 5 (GC) | No `builder.gc` section in `daemon.json`; default ~10 GB reservation was almost certainly evicting the expensive layers between builds | Set `defaultReservedSpace: "80GB"` |
+| dev-speed Phase 5 (GC) | No `builder.gc` section in `daemon.json`; default ~10 GB reservation was almost certainly evicting the expensive layers between builds | Set `defaultReservedSpace: "80GB"` (that machine's budget, derived from its layers and disk; not a recommendation) |
 | dev-speed Phase 7 (ninja) | SageAttention's C++/CUDA extension compiled without `ninja`, falling back to distutils' slow serial backend | Added `pip install ninja` to the builder stage |
 | dev-speed Phase 6 (package set) | Noted but not applied yet: `cuda-toolkit-13-2` (3.3 GB) vs `cuda-minimal-build-13-2` (~194 MB) for a compile-only stage | Left for a follow-up change — needs a real compile validation before swapping |
 
