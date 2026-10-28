@@ -57,6 +57,7 @@ Instala em `~/.claude/skills/docker-image-playbook`. Com flags — repare no
 curl -fsSL .../install.sh | bash -s -- --project   # ./.claude/skills/docker-image-playbook
 curl -fsSL .../install.sh | bash -s -- --force      # sobrescreve uma instalação existente
 curl -fsSL .../install.sh | bash -s -- --uninstall  # remove, sem precisar baixar nada
+curl -fsSL .../install.sh | bash -s -- --version 1.2.1  # uma versão lançada, não a ponta da branch
 ```
 
 **Windows (PowerShell 5.1+, já vem no Windows 10 em diante):**
@@ -75,6 +76,16 @@ irm https://raw.githubusercontent.com/fabricandosuaideia/Docker-Skill/main/insta
 
 O `install.sh` também roda direto no Windows se você tiver Git Bash ou WSL,
 como alternativa ao `install.ps1`.
+
+**Fixando uma versão.** Sem versão, os dois instaladores pegam a ponta da
+`main`. As versões lançadas são tags do git (`v1.2.1`, listadas no
+[`CHANGELOG.md`](CHANGELOG.md) e na página de Tags do repositório): passe
+`--version 1.2.1` (`-Version 1.2.1` no Windows), ou defina
+`DOCKER_SKILL_VERSION=1.2.1`, que funciona também na forma com pipe
+`irm ... | iex`. O instalador baixa essa tag e se recusa a instalar se o
+`SKILL.md` dela declarar outra versão. Fixar versão exige 1.2.0 ou mais nova
+— tags anteriores têm outro conjunto de arquivos; para elas, faça
+`git checkout v1.0.0` num clone e rode `./install.sh`.
 
 Se já existir uma sessão do Claude Code aberta, ela pega uma instalação
 global sob `~/.claude/skills/` ao vivo, sem precisar reiniciar — desde que

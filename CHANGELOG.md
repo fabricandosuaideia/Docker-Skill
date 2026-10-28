@@ -11,6 +11,17 @@ Versions 1.0.0 to 1.2.0 were tagged after the fact, on the commit that declared 
 
 ---
 
+## 1.3.0 — 2026-10-28
+
+Install a specific release instead of whatever `main` is today.
+
+### Added
+- `install.sh --version X.Y.Z` and `install.ps1 -Version X.Y.Z` (or `DOCKER_SKILL_VERSION`, which also
+  works with the piped `irm | iex` form) download the git tag `vX.Y.Z`. The installer refuses to
+  install if that tag's `SKILL.md` declares a different version, if the version is malformed, or if
+  it is combined with a local clone (where it would silently install the wrong files). Needs 1.2.0
+  or newer; older tags get an error that says so and how to install them from a checkout.
+
 ## 1.2.1 — 2026-10-28
 
 Examples and structure made independent of any one project or machine; release tooling added.

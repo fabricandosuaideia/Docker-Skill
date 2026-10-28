@@ -27,6 +27,13 @@
 .PARAMETER Uninstall
   Remove the installed skill (no download needed).
 
+.PARAMETER Version
+  Install release vX.Y.Z (a git tag) instead of the branch tip, e.g. -Version 1.2.1.
+  Also read from $env:DOCKER_SKILL_VERSION, which works with the piped form. Needs
+  1.2.0 or newer (older tags have a different file layout). Refuses to install if the
+  tag's SKILL.md declares another version. Downloads only: from a local clone, run
+  `git checkout vX.Y.Z` first.
+
 .EXAMPLE
   irm https://raw.githubusercontent.com/fabricandosuaideia/Docker-Skill/main/install.ps1 | iex
 
@@ -43,7 +50,8 @@ rather than silently clobbering local edits.
 param(
   [switch]$Project,
   [switch]$Force,
-  [switch]$Uninstall
+  [switch]$Uninstall,
+  [string]$Version
 )
 
 $ErrorActionPreference = "Stop"
@@ -51,6 +59,14 @@ $ErrorActionPreference = "Stop"
 $Repo      = "fabricandosuaideia/Docker-Skill"
 $Branch    = if ($env:DOCKER_SKILL_BRANCH) { $env:DOCKER_SKILL_BRANCH } else { "main" }
 $SkillName = "docker-image-playbook"
+
+# A pinned version names a git tag, so it must look like one. Accept a leading v.
+$ReqVersion = if ($Version) { $Version } elseif ($env:DOCKER_SKILL_VERSION) { $env:DOCKER_SKILL_VERSION } else { "" }
+$ReqVersion = $ReqVersion -replace '^[vV]', ''
+if ($ReqVersion -and $ReqVersion -notmatch '^\d+\.\d+\.\d+$') {
+  Write-Host "ERROR '$ReqVersion' is not a MAJOR.MINOR.PATCH version (e.g. 1.2.1)." -ForegroundColor Red
+  exit 1
+}
 
 # The skill is these files and nothing else. Used to validate a download (or
 # a local clone) before anything on disk is touched.
@@ -163,6 +179,11 @@ $Tmp = $null
 $Stage = "$Dest.tmp.$PID"
 
 try {
+  if ($LocalDir -and $ReqVersion) {
+    Write-Fail "-Version installs a release downloaded from GitHub, but this is a local clone."
+    Write-Host "Check the tag out first and install from it:  git checkout v$ReqVersion; .\install.ps1 -Force" -ForegroundColor Yellow
+    exit 1
+  }
   if ($LocalDir) {
     Write-Status "Installing from local clone at $LocalDir..."
     $SrcDir = $LocalDir
@@ -170,8 +191,10 @@ try {
     $Tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("docker-skill-" + [Guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Path $Tmp -Force | Out-Null
 
-    Write-Status "Downloading $SkillName ($Branch)..."
-    $zipUrl = "https://github.com/$Repo/archive/refs/heads/$Branch.zip"
+    if ($ReqVersion) { $refLabel = "v$ReqVersion"; $refPath = "tags/v$ReqVersion" }
+    else             { $refLabel = $Branch;        $refPath = "heads/$Branch" }
+    Write-Status "Downloading $SkillName ($refLabel)..."
+    $zipUrl = "https://github.com/$Repo/archive/refs/$refPath.zip"
     $zip    = Join-Path $Tmp "skill.zip"
     try {
       # TLS 1.2 for older Windows PowerShell defaults.
@@ -179,7 +202,8 @@ try {
       Invoke-WebRequest -Uri $zipUrl -OutFile $zip -UseBasicParsing
     } catch {
       Write-Fail "Failed to download $zipUrl"
-      Write-Host "If the repository or branch is unreachable, install by hand from a clone:" -ForegroundColor Yellow
+      if ($ReqVersion) { Write-Host "Is there a release v${ReqVersion}? Tags: https://github.com/$Repo/tags" -ForegroundColor Yellow }
+      Write-Host "If the repository or $refLabel is unreachable, install by hand from a clone:" -ForegroundColor Yellow
       Write-Host "  git clone https://github.com/$Repo.git; cd Docker-Skill; .\install.ps1" -ForegroundColor Yellow
       exit 1
     }
@@ -195,13 +219,15 @@ try {
   # install a skill whose own navigation table links to missing files --
   # silent capability loss.
   if (-not (Test-Path (Join-Path $SrcDir "SKILL.md"))) { Write-Fail "Source has no SKILL.md -- aborting."; exit 1 }
+  $pinHint = ""
+  if ($ReqVersion) { $pinHint = " Release v$ReqVersion predates this installer's file layout; -Version needs 1.2.0 or newer. For an older tag: git checkout v$ReqVersion; .\install.ps1" }
   foreach ($f in $RequiredFiles) {
-    if (-not (Test-Path (Join-Path $SrcDir $f))) { Write-Fail "Source is missing $f -- aborting."; exit 1 }
+    if (-not (Test-Path (Join-Path $SrcDir $f))) { Write-Fail "Source is missing $f -- aborting.$pinHint"; exit 1 }
   }
   $scrDir = Join-Path $SrcDir "scripts"
   if (-not (Test-Path $scrDir)) { Write-Fail "Source has no scripts\ -- aborting."; exit 1 }
   foreach ($s in $RequiredScripts) {
-    if (-not (Test-Path (Join-Path $scrDir $s))) { Write-Fail "Source is missing scripts\$s -- aborting."; exit 1 }
+    if (-not (Test-Path (Join-Path $scrDir $s))) { Write-Fail "Source is missing scripts\$s -- aborting.$pinHint"; exit 1 }
   }
 
   # Announce which version is going in, and which one it displaces. This is
@@ -209,6 +235,10 @@ try {
   # already on disk are both available -- say it out loud, or a user sitting
   # on an old install has no way to tell.
   $newVersion = Get-SkillVersion (Join-Path $SrcDir "SKILL.md")
+  if ($ReqVersion -and $newVersion -ne $ReqVersion) {
+    Write-Fail "Tag v$ReqVersion declares version $newVersion in its SKILL.md -- aborting. Nothing was installed."
+    exit 1
+  }
   if (Test-Path -LiteralPath $Dest) {
     $oldVersion = Get-SkillVersion (Join-Path $Dest "SKILL.md")
     if ($oldVersion -eq $newVersion) {

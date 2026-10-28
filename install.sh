@@ -24,6 +24,11 @@
 #
 # Safe to re-run: without --force it refuses to overwrite an existing
 # install rather than silently clobbering local edits.
+#
+# Pinning: --version X.Y.Z (or DOCKER_SKILL_VERSION=X.Y.Z) downloads the git tag
+# vX.Y.Z instead of the tip of a branch, and refuses to install if that tag's
+# SKILL.md declares a different version. Pinning is for downloads only; from a
+# local clone, `git checkout vX.Y.Z` first.
 set -euo pipefail
 
 REPO="fabricandosuaideia/Docker-Skill"
@@ -32,6 +37,7 @@ SKILL_NAME="docker-image-playbook"
 SCOPE="global"
 FORCE=0
 UNINSTALL=0
+VERSION_REQ="${DOCKER_SKILL_VERSION:-}"
 
 # The skill is these files and nothing else. Used to validate a download (or
 # a local clone) before anything on disk is touched.
@@ -52,6 +58,8 @@ Options:
   --project, --local   Install to ./.claude/skills/${SKILL_NAME}
   --global              Install to ~/.claude/skills/${SKILL_NAME} (default)
   --force, -f           Overwrite an existing install without prompting
+  --version X.Y.Z       Install release vX.Y.Z (a git tag) instead of the branch
+                        tip. Needs 1.2.0 or newer; older tags have another layout.
   --uninstall           Remove the installed skill (no download needed)
   -h, --help            Show this help message
 
@@ -59,6 +67,7 @@ Examples:
   curl -fsSL <url>/install.sh | bash
   curl -fsSL <url>/install.sh | bash -s -- --project
   curl -fsSL <url>/install.sh | bash -s -- --force
+  curl -fsSL <url>/install.sh | bash -s -- --version 1.2.1
   ./install.sh --project --force   (from a local clone)
 
 When piping into bash, flags MUST come after \`-s --\`; \`| bash --project\`
@@ -66,20 +75,32 @@ is parsed by bash itself and fails.
 EOF
 }
 
-for arg in "$@"; do
-  case "$arg" in
+while [ "$#" -gt 0 ]; do
+  case "$1" in
     --project|--local) SCOPE="project" ;;
     --global) SCOPE="global" ;;
     --force|-f) FORCE=1 ;;
     --uninstall) UNINSTALL=1 ;;
+    --version)
+      [ "$#" -ge 2 ] || { print_error "--version needs a value, e.g. --version 1.2.1"; exit 1; }
+      VERSION_REQ="$2"; shift ;;
+    --version=*) VERSION_REQ="${1#--version=}" ;;
     -h|--help) show_help; exit 0 ;;
     *)
-      print_error "Unknown option: $arg"
+      print_error "Unknown option: $1"
       show_help >&2
       exit 1
       ;;
   esac
+  shift
 done
+
+# A pinned version names a git tag, so it must look like one. Accept a leading v.
+VERSION_REQ="${VERSION_REQ#v}"
+if [ -n "$VERSION_REQ" ] && ! [[ "$VERSION_REQ" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  print_error "'${VERSION_REQ}' is not a MAJOR.MINOR.PATCH version (e.g. 1.2.1)."
+  exit 1
+fi
 
 if [ "$SCOPE" = "project" ]; then
   TARGET_ROOT="$(pwd)/.claude/skills"
@@ -155,6 +176,12 @@ if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
   fi
 fi
 
+if [ -n "$LOCAL_DIR" ] && [ -n "$VERSION_REQ" ]; then
+  print_error "--version installs a release downloaded from GitHub, but this is a local clone."
+  echo "Check the tag out first and install from it:  git checkout v${VERSION_REQ} && ./install.sh --force" >&2
+  exit 1
+fi
+
 # ---------------------------------------------------------------------------
 # Overwrite guard. Runs before the download so a `curl | bash` that's about
 # to fail this check doesn't spend time fetching a tarball first.
@@ -195,11 +222,17 @@ else
   done
 
   TMP_DIR="$(mktemp -d)"
-  print_status "Downloading ${SKILL_NAME} (${BRANCH})..."
-  TARBALL_URL="https://github.com/${REPO}/archive/refs/heads/${BRANCH}.tar.gz"
+  if [ -n "$VERSION_REQ" ]; then
+    REF_LABEL="v${VERSION_REQ}"; REF_PATH="tags/v${VERSION_REQ}"
+  else
+    REF_LABEL="${BRANCH}"; REF_PATH="heads/${BRANCH}"
+  fi
+  print_status "Downloading ${SKILL_NAME} (${REF_LABEL})..."
+  TARBALL_URL="https://github.com/${REPO}/archive/refs/${REF_PATH}.tar.gz"
   if ! curl -fsSL "$TARBALL_URL" -o "$TMP_DIR/skill.tar.gz"; then
     print_error "Failed to download ${TARBALL_URL}"
-    echo "If the repository or branch is unreachable, install by hand from a clone:" >&2
+    [ -z "$VERSION_REQ" ] || echo "Is there a release v${VERSION_REQ}? Tags: https://github.com/${REPO}/tags" >&2
+    echo "If the repository or ${REF_LABEL} is unreachable, install by hand from a clone:" >&2
     echo "  git clone https://github.com/${REPO}.git && cd Docker-Skill && ./install.sh" >&2
     exit 1
   fi
@@ -222,12 +255,14 @@ fi
 # install a skill whose own navigation table links to missing files --
 # silent capability loss.
 [ -n "$SRC_DIR" ] && [ -f "$SRC_DIR/SKILL.md" ] || { print_error "Source has no SKILL.md -- aborting."; exit 1; }
+PIN_HINT=""
+[ -z "$VERSION_REQ" ] || PIN_HINT=" Release v${VERSION_REQ} predates this installer's file layout; --version needs 1.2.0 or newer. For an older tag: git checkout v${VERSION_REQ} && ./install.sh"
 for f in "${REQUIRED_FILES[@]}"; do
-  [ -f "$SRC_DIR/$f" ] || { print_error "Source is missing $f -- aborting."; exit 1; }
+  [ -f "$SRC_DIR/$f" ] || { print_error "Source is missing $f -- aborting.${PIN_HINT}"; exit 1; }
 done
 [ -d "$SRC_DIR/scripts" ] || { print_error "Source has no scripts/ -- aborting."; exit 1; }
 for s in "${REQUIRED_SCRIPTS[@]}"; do
-  [ -f "$SRC_DIR/scripts/$s" ] || { print_error "Source is missing scripts/$s -- aborting."; exit 1; }
+  [ -f "$SRC_DIR/scripts/$s" ] || { print_error "Source is missing scripts/$s -- aborting.${PIN_HINT}"; exit 1; }
 done
 
 # Announce which version is going in, and which one it displaces. This is the
@@ -235,6 +270,10 @@ done
 # disk are both available -- say it out loud, or a user sitting on an old
 # install has no way to tell.
 NEW_VERSION="$(skill_version "$SRC_DIR/SKILL.md")"
+if [ -n "$VERSION_REQ" ] && [ "$NEW_VERSION" != "$VERSION_REQ" ]; then
+  print_error "Tag v${VERSION_REQ} declares version ${NEW_VERSION} in its SKILL.md -- aborting. Nothing was installed."
+  exit 1
+fi
 if [ -d "$TARGET" ]; then
   OLD_VERSION="$(skill_version "$TARGET/SKILL.md")"
   if [ "$OLD_VERSION" = "$NEW_VERSION" ]; then

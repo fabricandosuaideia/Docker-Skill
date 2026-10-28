@@ -8,7 +8,7 @@ not a library, so "breaking" means breaking for the people who installed it or f
 | Bump | When |
 |---|---|
 | **MAJOR** | The skill is renamed or restructured so an existing install or a reference to it stops working: a renamed skill, a removed file or script, a changed install path. |
-| **MINOR** | New capability: a new phase, reference file, script or audit check, or a new trigger in `description`. |
+| **MINOR** | New capability: a new phase, reference file, script, audit check or installer option, or a new trigger in `description`. |
 | **PATCH** | Corrections and rewording: a fixed claim, a fixed false positive, examples made more general, release tooling. |
 
 ## Releasing
