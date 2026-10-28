@@ -4,7 +4,7 @@ description: Cut Docker/BuildKit build time and harden images for production. Us
 license: MIT
 metadata:
   author: Fabricando Sua Ideia - github.com/fabricandosuaideia
-  version: "1.2.0"
+  version: "1.2.1"
 ---
 
 # Docker / BuildKit Image Playbook
